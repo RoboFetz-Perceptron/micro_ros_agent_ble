@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+    <name>micro_ros_agent_ble</name>
+    <version>0.1.0</version>
+    <description>micro-ROS Agent for BLE transport</description>
+    <maintainer email="friedl.jak@gmail.com">Geibinger</maintainer>
+    <license>Apache-2.0</license>
+
+    <buildtool_depend>ament_cmake</buildtool_depend>
+    <buildtool_depend>pkg-config</buildtool_depend>
+
+    <build_depend>libbluetooth-dev</build_depend>
+    <exec_depend>bluez</exec_depend>
+
+    <depend>rmw</depend>
+    <depend>rcutils</depend>
+    <depend>rmw_fastrtps_shared_cpp</depend>
+    <depend>rmw_dds_common</depend>
+    <depend>micro_ros_msgs</depend>
+
+    <build_depend>rosidl_typesupport_fastrtps_cpp</build_depend>
+    <build_depend>rosidl_runtime_cpp</build_depend>
+    <build_depend>rosidl_typesupport_cpp</build_depend>
+
+    <export>
+        <build_type>ament_cmake</build_type>
+    </export>
+</package>
