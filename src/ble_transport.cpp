@@ -1,6 +1,8 @@
 #include "transport/ble_transport.hpp"
 
 #include <iostream>
+#include <iomanip>
+#include <sstream>
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -95,8 +97,16 @@ bool BLETransport::fini()
 ssize_t BLETransport::send(const uint8_t* buffer, size_t length)
 {
     if (!buffer || length == 0 || !connected_ || !peripheral_) {
+        if (debug_enabled_) {
+            std::cerr << "[BLE] Send failed: "
+                      << (!buffer ? "null buffer" : length == 0 ? "zero length" :
+                          !connected_ ? "not connected" : "no peripheral")
+                      << std::endl;
+        }
         return -1;
     }
+
+    log_bytes("TX", buffer, length);
 
     try {
         size_t bytes_sent = 0;
@@ -119,6 +129,10 @@ ssize_t BLETransport::send(const uint8_t* buffer, size_t length)
             if (bytes_sent < length) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(CHUNK_DELAY_MS));
             }
+        }
+
+        if (debug_enabled_) {
+            std::cout << "[BLE] TX complete: " << bytes_sent << "/" << length << " bytes" << std::endl;
         }
         return static_cast<ssize_t>(bytes_sent);
 
@@ -158,6 +172,8 @@ ssize_t BLETransport::receive(uint8_t* buffer, size_t max_length, int timeout_ms
         buffer[bytes_read++] = rx_buffer_.front();
         rx_buffer_.pop();
     }
+
+    log_bytes("RX", buffer, bytes_read);
 
     return static_cast<ssize_t>(bytes_read);
 }
@@ -266,6 +282,25 @@ void BLETransport::on_disconnect()
     std::cout << "[BLE] Disconnected from " << device_name_ << std::endl;
     connected_ = false;
     rx_cv_.notify_all();
+}
+
+void BLETransport::log_bytes(const char* prefix, const uint8_t* data, size_t len) const
+{
+    if (!debug_enabled_ || len == 0) return;
+
+    std::ostringstream oss;
+    oss << "[BLE] " << prefix << " (" << len << " bytes): ";
+
+    // Show first 32 bytes max in hex
+    size_t show_len = std::min(len, size_t(32));
+    for (size_t i = 0; i < show_len; ++i) {
+        oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(data[i]) << " ";
+    }
+    if (len > 32) {
+        oss << "...";
+    }
+
+    std::cout << oss.str() << std::endl;
 }
 
 }  // namespace micro_ros_agent_ble

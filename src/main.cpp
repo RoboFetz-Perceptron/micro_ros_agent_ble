@@ -43,10 +43,13 @@ static Args parse_args(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if ((arg == "--dev" || arg == "-d") && i + 1 < argc) a.device = argv[++i];
-        else if (arg == "-v" && i + 1 < argc) a.verbosity = std::clamp(std::stoi(argv[++i]), 0, 6);
+        else if ((arg == "-v" || arg == "--verbose") && i + 1 < argc) a.verbosity = std::clamp(std::stoi(argv[++i]), 0, 6);
         else if (arg == "--timeout" && i + 1 < argc) a.scan_timeout = std::stoi(argv[++i]);
         else if (arg == "-h" || arg == "--help") {
-            std::cout << "Usage: " << argv[0] << " --dev <name> [-v <0-6>] [--timeout <ms>]\n";
+            std::cout << "Usage: " << argv[0] << " --dev <name> [-v|--verbose <0-6>] [--timeout <ms>]\n";
+            std::cout << "  -d, --dev       BLE device name to connect to (required)\n";
+            std::cout << "  -v, --verbose   Verbosity level 0-6 (default: 4, >=5 enables transport debug)\n";
+            std::cout << "  --timeout       BLE scan timeout in ms (default: 10000)\n";
             std::exit(0);
         }
     }
@@ -64,6 +67,12 @@ int main(int argc, char* argv[]) {
 
     g_transport = std::make_unique<micro_ros_agent_ble::BLETransport>(args.device, args.scan_timeout);
 
+    // Enable transport debug logging for high verbosity
+    if (args.verbosity >= 5) {
+        g_transport->set_debug(true);
+        std::cout << "[Agent] Transport debug logging enabled (verbosity=" << args.verbosity << ")" << std::endl;
+    }
+
     eprosima::uxr::CustomAgent::InitFunction init_fn = callback_init;
     eprosima::uxr::CustomAgent::FiniFunction fini_fn = callback_fini;
     eprosima::uxr::CustomAgent::SendMsgFunction send_fn = callback_send;
@@ -73,6 +82,7 @@ int main(int argc, char* argv[]) {
         init_fn, fini_fn, send_fn, recv_fn);
 
     agent.set_verbose_level(args.verbosity);
+    std::cout << "[Agent] XRCE-DDS verbosity level: " << args.verbosity << std::endl;
 
     g_graph_plugin = std::make_unique<uros::agent::graph_manager::GraphManagerPlugin>();
     g_graph_plugin->register_callbacks(agent);

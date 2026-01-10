@@ -27,14 +27,15 @@ namespace micro_ros_agent_ble {
         BLETransport(const BLETransport&) = delete;
         BLETransport& operator=(const BLETransport&)= delete;
 
-        //? Are these the functions nessesary for every custom agent?
         bool init();
         bool fini();
         ssize_t send(const uint8_t* buffer, size_t length);
         ssize_t receive(uint8_t* buffer, size_t max_length, int timeout_ms);
 
-        //! Check if we actually need this
         bool is_connected() const { return connected_.load(); }
+
+        // Debug logging control
+        void set_debug(bool enable) { debug_enabled_ = enable; }
 
         std::string device_name() const { return device_name_; }
         std::string device_address() const { return device_address_; }
@@ -58,11 +59,15 @@ namespace micro_ros_agent_ble {
 
         std::atomic<bool> connected_{false};
         std::string device_address_;
+        bool debug_enabled_{false};
 
         static constexpr size_t MAX_RX_BUFFER_SIZE = 8192;
-        static constexpr size_t BLE_CHUNK_SIZE = 20;
-        static constexpr int CHUNK_DELAY_MS = 5;
+        static constexpr size_t BLE_CHUNK_SIZE = 244;  // Max ATT payload with 247 MTU
+        static constexpr int CHUNK_DELAY_MS = 1;       // Minimal delay between chunks
         static constexpr int CONNECT_TIMEOUT_MS = 5000;
+
+        // Debug helper
+        void log_bytes(const char* prefix, const uint8_t* data, size_t len) const;
     };
 
 }
