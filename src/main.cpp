@@ -36,7 +36,7 @@ static ssize_t callback_receive(eprosima::uxr::CustomEndPoint*, uint8_t* buf, si
 
 static void signal_handler(int) { g_running = false; }
 
-struct Args { std::string device; int verbosity = 4; int scan_timeout = 10000; };
+struct Args { std::string device; int verbosity = 4; int scan_timeout = 10000; int reconnect_delay = 3; int rssi_interval = 0; };
 
 static Args parse_args(int argc, char* argv[]) {
     Args a;
@@ -45,11 +45,15 @@ static Args parse_args(int argc, char* argv[]) {
         if ((arg == "--dev" || arg == "-d") && i + 1 < argc) a.device = argv[++i];
         else if ((arg == "-v" || arg == "--verbose") && i + 1 < argc) a.verbosity = std::clamp(std::stoi(argv[++i]), 0, 6);
         else if (arg == "--timeout" && i + 1 < argc) a.scan_timeout = std::stoi(argv[++i]);
+        else if (arg == "--reconnect-delay" && i + 1 < argc) a.reconnect_delay = std::max(0, std::stoi(argv[++i]));
+        else if (arg == "--rssi-interval" && i + 1 < argc) a.rssi_interval = std::clamp(std::stoi(argv[++i]), 0, 60);
         else if (arg == "-h" || arg == "--help") {
-            std::cout << "Usage: " << argv[0] << " --dev <name> [-v|--verbose <0-6>] [--timeout <ms>]\n";
-            std::cout << "  -d, --dev       BLE device name to connect to (required)\n";
-            std::cout << "  -v, --verbose   Verbosity level 0-6 (default: 4, >=5 enables transport debug)\n";
-            std::cout << "  --timeout       BLE scan timeout in ms (default: 10000)\n";
+            std::cout << "Usage: " << argv[0] << " --dev <name> [-v|--verbose <0-6>] [--timeout <ms>] [--reconnect-delay <s>] [--rssi-interval <s>]\n";
+            std::cout << "  -d, --dev            BLE device name to connect to (required)\n";
+            std::cout << "  -v, --verbose        Verbosity level 0-6 (default: 4, >=5 enables transport debug)\n";
+            std::cout << "  --timeout            BLE scan timeout in ms (default: 10000)\n";
+            std::cout << "  --reconnect-delay    Seconds between reconnection attempts (default: 3, 0 to disable)\n";
+            std::cout << "  --rssi-interval      RSSI logging interval in seconds (default: 0 = disabled, max: 60)\n";
             std::exit(0);
         }
     }
@@ -66,6 +70,12 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signal_handler);
 
     g_transport = std::make_unique<micro_ros_agent_ble::BLETransport>(args.device, args.scan_timeout);
+
+    // Enable RSSI monitoring
+    if (args.rssi_interval > 0) {
+        g_transport->set_rssi_interval(args.rssi_interval);
+        std::cout << "[Agent] RSSI logging every " << args.rssi_interval << "s" << std::endl;
+    }
 
     // Enable transport debug logging for high verbosity
     if (args.verbosity >= 5) {
@@ -87,17 +97,42 @@ int main(int argc, char* argv[]) {
     g_graph_plugin = std::make_unique<uros::agent::graph_manager::GraphManagerPlugin>();
     g_graph_plugin->register_callbacks(agent);
 
-    if (!agent.start()) { std::cerr << "[Agent] Failed to start\n"; return 1; }
+    bool reconnect = args.reconnect_delay > 0;
 
-    std::cout << "[Agent] Running. Press Ctrl+C to stop." << std::endl;
+    while (g_running) {
+        if (!agent.start()) {
+            if (!reconnect || !g_running) {
+                std::cerr << "[Agent] Failed to start" << std::endl;
+                break;
+            }
+            std::cout << "[Agent] Failed to start, retrying in "
+                      << args.reconnect_delay << "s..." << std::endl;
+            for (int i = 0; i < args.reconnect_delay * 10 && g_running; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            continue;
+        }
 
-    while (g_running && g_transport && g_transport->is_connected()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::cout << "[Agent] Running. Press Ctrl+C to stop." << std::endl;
+
+        while (g_running && g_transport && g_transport->is_connected()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        agent.stop();
+
+        if (!g_running) break;
+        if (!reconnect) break;
+
+        std::cout << "[Agent] Connection lost. Reconnecting in "
+                  << args.reconnect_delay << "s..." << std::endl;
+        for (int i = 0; i < args.reconnect_delay * 10 && g_running; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
     }
 
-    std::cout << "[Agent] Stopping..." << std::endl;
+    // Final cleanup (agent.stop() is safe to call if already stopped)
     agent.stop();
-
     g_graph_plugin.reset();
     g_transport.reset();
 

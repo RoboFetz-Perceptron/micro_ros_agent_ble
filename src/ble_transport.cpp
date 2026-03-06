@@ -58,6 +58,12 @@ bool BLETransport::init()
         connected_ = true;
         std::cout << "[BLE] Connected to " << device_name_
                   << " (" << device_address_ << ")" << std::endl;
+
+        // Start RSSI monitoring thread if interval is set
+        if (rssi_interval_s_ > 0) {
+            rssi_thread_ = std::thread(&BLETransport::rssi_monitor_loop, this);
+        }
+
         return true;
 
     } catch (const std::exception& e) {
@@ -70,6 +76,11 @@ bool BLETransport::fini()
 {
     connected_ = false;
     rx_cv_.notify_all();  // Wake up any waiting receive()
+
+    // Stop RSSI monitoring thread
+    if (rssi_thread_.joinable()) {
+        rssi_thread_.join();
+    }
 
     try {
         if (peripheral_ && peripheral_->is_connected()) {
@@ -275,6 +286,23 @@ void BLETransport::on_notification(SimpleBLE::ByteArray data)
     }
 
     rx_cv_.notify_one();
+}
+
+void BLETransport::rssi_monitor_loop()
+{
+    while (connected_) {
+        try {
+            int16_t rssi = peripheral_->rssi();
+            std::cout << "[BLE] RSSI: " << rssi << " dBm" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[BLE] RSSI read error: " << e.what() << std::endl;
+        }
+
+        // Sleep in small increments to allow quick shutdown
+        for (int i = 0; i < rssi_interval_s_ * 10 && connected_; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
 }
 
 void BLETransport::on_disconnect()
