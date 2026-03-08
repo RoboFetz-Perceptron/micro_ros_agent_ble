@@ -7,6 +7,15 @@
 #include <thread>
 #include <chrono>
 
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+extern "C" {
+#include <bluetooth/bluetooth.h>
+#include <bluetooth/hci.h>
+#include <bluetooth/hci_lib.h>
+}
+
 namespace micro_ros_agent_ble {
 
 BLETransport::BLETransport(const std::string& device_name, int scan_timeout_ms)
@@ -290,19 +299,48 @@ void BLETransport::on_notification(SimpleBLE::ByteArray data)
 
 void BLETransport::rssi_monitor_loop()
 {
+    // Parse BLE address from device_address_ (e.g. "40:4C:CA:57:70:B2")
+    bdaddr_t bdaddr;
+    str2ba(device_address_.c_str(), &bdaddr);
+
+    // Open HCI socket
+    int hci_dev = hci_get_route(nullptr);
+    int hci_sock = hci_open_dev(hci_dev);
+    if (hci_sock < 0) {
+        std::cerr << "[BLE] RSSI monitor: failed to open HCI device" << std::endl;
+        return;
+    }
+
     while (connected_) {
-        try {
-            int16_t rssi = peripheral_->rssi();
-            std::cout << "[BLE] RSSI: " << rssi << " dBm" << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "[BLE] RSSI read error: " << e.what() << std::endl;
+        // Get connection handle for our device
+        struct hci_conn_info_req *cr;
+        cr = static_cast<struct hci_conn_info_req*>(
+            malloc(sizeof(*cr) + sizeof(struct hci_conn_info)));
+        if (!cr) break;
+
+        bacpy(&cr->bdaddr, &bdaddr);
+        cr->type = 0x80;  // LE_LINK
+
+        if (ioctl(hci_sock, HCIGETCONNINFO, cr) == 0) {
+            uint16_t handle = cr->conn_info->handle;
+            int8_t rssi;
+            if (hci_read_rssi(hci_sock, handle, &rssi, 1000) == 0) {
+                std::cout << "[BLE] RSSI: " << static_cast<int>(rssi) << " dBm" << std::endl;
+            } else {
+                std::cerr << "[BLE] RSSI read failed" << std::endl;
+            }
+        } else {
+            std::cerr << "[BLE] RSSI monitor: could not get connection handle" << std::endl;
         }
+        free(cr);
 
         // Sleep in small increments to allow quick shutdown
         for (int i = 0; i < rssi_interval_s_ * 10 && connected_; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
+
+    close(hci_sock);
 }
 
 void BLETransport::on_disconnect()

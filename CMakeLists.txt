@@ -34,6 +34,7 @@ target_link_libraries(${PROJECT_NAME}
     micro_ros_agent::micro_ros_agent_graph_manager  # Graph manager library from micro_ros_agent
     microxrcedds_agent
     simpleble::simpleble
+    bluetooth
     pthread
     $<$<PLATFORM_ID:Linux>:rt>
     $<$<PLATFORM_ID:Linux>:dl>
