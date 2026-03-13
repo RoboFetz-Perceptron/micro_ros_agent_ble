@@ -303,11 +303,30 @@ void BLETransport::rssi_monitor_loop()
     bdaddr_t bdaddr;
     str2ba(device_address_.c_str(), &bdaddr);
 
-    // Open HCI socket
-    int hci_dev = hci_get_route(nullptr);
-    int hci_sock = hci_open_dev(hci_dev);
+    // Find the HCI adapter that holds the BLE connection
+    int hci_sock = -1;
+    for (int dev_id = 0; dev_id < 4; ++dev_id) {
+        int sock = hci_open_dev(dev_id);
+        if (sock < 0) continue;
+
+        auto *cr = static_cast<struct hci_conn_info_req*>(
+            malloc(sizeof(struct hci_conn_info_req) + sizeof(struct hci_conn_info)));
+        if (!cr) { close(sock); continue; }
+        bacpy(&cr->bdaddr, &bdaddr);
+        cr->type = 0x80;  // LE_LINK
+
+        bool found = (ioctl(sock, HCIGETCONNINFO, cr) == 0);
+        free(cr);
+
+        if (found) {
+            hci_sock = sock;
+            std::cout << "[BLE] RSSI monitor: using hci" << dev_id << std::endl;
+            break;
+        }
+        close(sock);
+    }
     if (hci_sock < 0) {
-        std::cerr << "[BLE] RSSI monitor: failed to open HCI device" << std::endl;
+        std::cerr << "[BLE] RSSI monitor: no adapter found with connection to " << device_address_ << std::endl;
         return;
     }
 
