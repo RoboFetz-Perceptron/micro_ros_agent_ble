@@ -31,6 +31,9 @@ BLETransport::~BLETransport()
 
 bool BLETransport::init()
 {
+    // Clean up any previous partial state from a failed init or prior connection
+    fini();
+
     try {
         if (!SimpleBLE::Adapter::bluetooth_enabled()) {
             std::cerr << "[BLE] Bluetooth is not enabled" << std::endl;
@@ -202,37 +205,45 @@ bool BLETransport::scan_for_device()
 {
     std::cout << "[BLE] Scanning for: " << device_name_ << std::endl;
 
-    bool found = false;
+    std::mutex scan_mutex;
+    std::condition_variable scan_cv;
+    std::atomic<bool> found{false};
     SimpleBLE::Peripheral found_peripheral;
 
     adapter_->set_callback_on_scan_found([&](SimpleBLE::Peripheral peripheral) {
         if (peripheral.identifier() == device_name_) {
-            found_peripheral = peripheral;
+            {
+                std::lock_guard<std::mutex> lock(scan_mutex);
+                found_peripheral = std::move(peripheral);
+            }
             found = true;
+            scan_cv.notify_one();
             adapter_->scan_stop();
         }
     });
 
     adapter_->scan_start();
 
-    auto start = std::chrono::steady_clock::now();
-    while (!found) {
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start).count();
-        if (elapsed >= scan_timeout_ms_) {
-            adapter_->scan_stop();
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    {
+        std::unique_lock<std::mutex> lock(scan_mutex);
+        scan_cv.wait_for(lock, std::chrono::milliseconds(scan_timeout_ms_), [&] {
+            return found.load();
+        });
     }
 
-    if (found) {
-        peripheral_ = std::make_unique<SimpleBLE::Peripheral>(found_peripheral);
-        device_address_ = peripheral_->address();
-        std::cout << "[BLE] Found: " << device_name_ << " at " << device_address_ << std::endl;
+    if (!found) {
+        adapter_->scan_stop();
+        return false;
     }
 
-    return found;
+    {
+        std::lock_guard<std::mutex> lock(scan_mutex);
+        peripheral_ = std::make_unique<SimpleBLE::Peripheral>(std::move(found_peripheral));
+    }
+    device_address_ = peripheral_->address();
+    std::cout << "[BLE] Found: " << device_name_ << " at " << device_address_ << std::endl;
+
+    return true;
 }
 
 bool BLETransport::connect_to_device()
@@ -266,21 +277,31 @@ bool BLETransport::setup_notifications()
 {
     if (!peripheral_ || !peripheral_->is_connected()) return false;
 
-    try {
-        peripheral_->notify(
-            NUSConfig::SERVICE_UUID,
-            NUSConfig::TX_CHAR_UUID,
-            [this](SimpleBLE::ByteArray data) {
-                this->on_notification(data);
-            });
+    // Retry a few times, GATT discovery may still be in progress after connect
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        try {
+            peripheral_->notify(
+                NUSConfig::SERVICE_UUID,
+                NUSConfig::TX_CHAR_UUID,
+                [this](SimpleBLE::ByteArray data) {
+                    this->on_notification(data);
+                });
 
-        std::cout << "[BLE] Subscribed to notifications" << std::endl;
-        return true;
+            std::cout << "[BLE] Subscribed to notifications" << std::endl;
+            return true;
 
-    } catch (const std::exception& e) {
-        std::cerr << "[BLE] Notification setup error: " << e.what() << std::endl;
-        return false;
+        } catch (const std::exception& e) {
+            if (attempt < 4) {
+                std::cout << "[BLE] Notification setup attempt " << (attempt + 1)
+                          << " failed, retrying..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            } else {
+                std::cerr << "[BLE] Notification setup failed after retries: "
+                          << e.what() << std::endl;
+            }
+        }
     }
+    return false;
 }
 
 void BLETransport::on_notification(SimpleBLE::ByteArray data)
