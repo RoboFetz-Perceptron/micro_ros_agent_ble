@@ -74,6 +74,10 @@ namespace micro_ros_agent_ble {
         static constexpr size_t BLE_CHUNK_SIZE = 244;  // Max ATT payload with 247 MTU
         static constexpr int CHUNK_DELAY_MS = 1;       // Minimal delay between chunks
         static constexpr int CONNECT_TIMEOUT_MS = 10000;
+        static constexpr int MIN_SEND_INTERVAL_MS = 5;  // Prevent BLE TX flooding
+
+        // TX throttling state
+        std::chrono::steady_clock::time_point last_send_time_{};
 
         // Debug helper
         void log_bytes(const char* prefix, const uint8_t* data, size_t len) const;

@@ -15,20 +15,21 @@
 static std::unique_ptr<micro_ros_agent_ble::BLETransport> g_transport;
 static eprosima::uxr::CustomEndPoint g_endpoint;
 static std::atomic<bool> g_running{true};
+static std::atomic<bool> g_shutting_down{false};
 static std::unique_ptr<uros::agent::graph_manager::GraphManagerPlugin> g_graph_plugin;
 
 static bool callback_init() { return g_transport && g_transport->init(); }
 static bool callback_fini() { return !g_transport || g_transport->fini(); }
 
 static ssize_t callback_send(const eprosima::uxr::CustomEndPoint*, uint8_t* buf, size_t len, eprosima::uxr::TransportRc& err) {
-    if (!g_transport || !g_transport->is_connected()) { err = eprosima::uxr::TransportRc::connection_error; return -1; }
+    if (g_shutting_down || !g_transport || !g_transport->is_connected()) { err = eprosima::uxr::TransportRc::connection_error; return -1; }
     ssize_t r = g_transport->send(buf, len);
     err = (r < 0) ? eprosima::uxr::TransportRc::server_error : eprosima::uxr::TransportRc::ok;
     return r;
 }
 
 static ssize_t callback_receive(eprosima::uxr::CustomEndPoint*, uint8_t* buf, size_t max, int timeout_ms, eprosima::uxr::TransportRc& err) {
-    if (!g_transport) { err = eprosima::uxr::TransportRc::connection_error; return -1; }
+    if (g_shutting_down || !g_transport) { err = eprosima::uxr::TransportRc::connection_error; return -1; }
     ssize_t r = g_transport->receive(buf, max, timeout_ms);
     err = (r < 0) ? eprosima::uxr::TransportRc::connection_error : (r == 0) ? eprosima::uxr::TransportRc::timeout_error : eprosima::uxr::TransportRc::ok;
     return r;
@@ -100,6 +101,7 @@ int main(int argc, char* argv[]) {
     bool reconnect = args.reconnect_delay > 0;
 
     while (g_running) {
+        g_shutting_down = false;
         if (!agent.start()) {
             if (!reconnect || !g_running) {
                 std::cerr << "[Agent] Failed to start" << std::endl;
@@ -119,6 +121,7 @@ int main(int argc, char* argv[]) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
+        g_shutting_down = true;
         agent.stop();
 
         if (!g_running) break;
@@ -131,7 +134,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Final cleanup (agent.stop() is safe to call if already stopped)
+    // Final cleanup — set shutdown flag to prevent DDS callbacks from
+    // accessing transport after it's torn down (prevents SIGSEGV)
+    g_shutting_down = true;
     agent.stop();
     g_graph_plugin.reset();
     g_transport.reset();

@@ -132,6 +132,17 @@ ssize_t BLETransport::send(const uint8_t* buffer, size_t length)
     log_bytes("TX", buffer, length);
 
     try {
+        // Throttle TX to prevent overwhelming the BLE stack.
+        // Without this, XRCE-DDS heartbeat/ACKNACK bursts (~600+ msg/sec)
+        // saturate the BLE link and starve firmware CREATE requests.
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_send_time_);
+        if (elapsed.count() < MIN_SEND_INTERVAL_MS) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(MIN_SEND_INTERVAL_MS) - elapsed);
+        }
+        last_send_time_ = std::chrono::steady_clock::now();
+
         size_t bytes_sent = 0;
         while (bytes_sent < length && connected_) {
             size_t chunk_size = std::min(BLE_CHUNK_SIZE, length - bytes_sent);
