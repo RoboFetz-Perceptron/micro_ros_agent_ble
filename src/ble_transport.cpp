@@ -132,17 +132,6 @@ ssize_t BLETransport::send(const uint8_t* buffer, size_t length)
     log_bytes("TX", buffer, length);
 
     try {
-        // Throttle TX to prevent overwhelming the BLE stack.
-        // Without this, XRCE-DDS heartbeat/ACKNACK bursts (~600+ msg/sec)
-        // saturate the BLE link and starve firmware CREATE requests.
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_send_time_);
-        if (elapsed.count() < MIN_SEND_INTERVAL_MS) {
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(MIN_SEND_INTERVAL_MS) - elapsed);
-        }
-        last_send_time_ = std::chrono::steady_clock::now();
-
         size_t bytes_sent = 0;
         while (bytes_sent < length && connected_) {
             size_t chunk_size = std::min(BLE_CHUNK_SIZE, length - bytes_sent);
@@ -335,32 +324,13 @@ void BLETransport::rssi_monitor_loop()
     bdaddr_t bdaddr;
     str2ba(device_address_.c_str(), &bdaddr);
 
-    // Find the HCI adapter that holds the BLE connection
-    int hci_sock = -1;
-    for (int dev_id = 0; dev_id < 4; ++dev_id) {
-        int sock = hci_open_dev(dev_id);
-        if (sock < 0) continue;
-
-        auto *cr = static_cast<struct hci_conn_info_req*>(
-            malloc(sizeof(struct hci_conn_info_req) + sizeof(struct hci_conn_info)));
-        if (!cr) { close(sock); continue; }
-        bacpy(&cr->bdaddr, &bdaddr);
-        cr->type = 0x80;  // LE_LINK
-
-        bool found = (ioctl(sock, HCIGETCONNINFO, cr) == 0);
-        free(cr);
-
-        if (found) {
-            hci_sock = sock;
-            std::cout << "[BLE] RSSI monitor: using hci" << dev_id << std::endl;
-            break;
-        }
-        close(sock);
-    }
+    // Open the configured HCI adapter
+    int hci_sock = hci_open_dev(hci_dev_id_);
     if (hci_sock < 0) {
-        std::cerr << "[BLE] RSSI monitor: no adapter found with connection to " << device_address_ << std::endl;
+        std::cerr << "[BLE] RSSI monitor: failed to open hci" << hci_dev_id_ << std::endl;
         return;
     }
+    std::cout << "[BLE] RSSI monitor: using hci" << hci_dev_id_ << std::endl;
 
     while (connected_) {
         // Get connection handle for our device

@@ -35,6 +35,12 @@ def generate_launch_description():
         description='RSSI logging interval in seconds (0 to disable)'
     )
 
+    hci_device_arg = DeclareLaunchArgument(
+        'hci',
+        default_value='0',
+        description='HCI device ID for RSSI monitoring (0 = hci0, 1 = hci1, ...)'
+    )
+
     agent_node_device = Node(
         package='micro_ros_agent_ble',
         executable='micro_ros_agent_ble',
@@ -46,6 +52,7 @@ def generate_launch_description():
             '--verbose', LaunchConfiguration('verbose'),
             '--reconnect-delay', LaunchConfiguration('reconnect_delay'),
             '--rssi-interval', LaunchConfiguration('rssi_interval'),
+            '--hci', LaunchConfiguration('hci'),
         ]
     )
 
@@ -55,5 +62,6 @@ def generate_launch_description():
         verbose_arg,
         reconnect_delay_arg,
         rssi_interval_arg,
+        hci_device_arg,
         agent_node_device
     ])

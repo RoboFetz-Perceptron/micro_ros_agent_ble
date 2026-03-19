@@ -25,7 +25,9 @@ Or with the launch file:
 ros2 launch micro_ros_agent_ble agent_ble.launch.py device_name:=<ble_device_name>
 ```
 
-Replace `<ble_device_name>` with the, duh, BLE advertising name of your bluetooth device. Then, the agent will scan for a device with that name and try to connect to it. The `--timeout` parameter is optional and describes how long the agent looks for a device with the above name.
+Replace `<ble_device_name>` with the, duh, BLE advertising name of your bluetooth device. Then, the agent will scan for a device with that name and try to connect to it.
+
+Launch parameters: `device_name`, `scan_timeout`, `verbose` (0-6), `reconnect_delay`, `rssi_interval`, `hci` (HCI device ID, default 0). Use `hci:=1` if your BLE adapter is on hci1 (e.g. external dongle).
 
 The data transfer happens in a NUS [Nordic Uart Service](https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/libraries/bluetooth/services/nus.html) style configuration, with the typical uuids:
 ```python

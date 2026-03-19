@@ -41,6 +41,9 @@ namespace micro_ros_agent_ble {
         // RSSI logging interval (0 = disabled)
         void set_rssi_interval(int seconds) { rssi_interval_s_ = seconds; }
 
+        // HCI device ID for RSSI monitoring (default: 0 = hci0)
+        void set_hci_device(int dev_id) { hci_dev_id_ = dev_id; }
+
         std::string device_name() const { return device_name_; }
         std::string device_address() const { return device_address_; }
 
@@ -68,16 +71,13 @@ namespace micro_ros_agent_ble {
 
         // RSSI monitoring
         int rssi_interval_s_{0};
+        int hci_dev_id_{0};
         std::thread rssi_thread_;
 
         static constexpr size_t MAX_RX_BUFFER_SIZE = 8192;
         static constexpr size_t BLE_CHUNK_SIZE = 244;  // Max ATT payload with 247 MTU
         static constexpr int CHUNK_DELAY_MS = 1;       // Minimal delay between chunks
         static constexpr int CONNECT_TIMEOUT_MS = 10000;
-        static constexpr int MIN_SEND_INTERVAL_MS = 5;  // Prevent BLE TX flooding
-
-        // TX throttling state
-        std::chrono::steady_clock::time_point last_send_time_{};
 
         // Debug helper
         void log_bytes(const char* prefix, const uint8_t* data, size_t len) const;

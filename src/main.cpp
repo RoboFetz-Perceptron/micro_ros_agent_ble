@@ -37,7 +37,7 @@ static ssize_t callback_receive(eprosima::uxr::CustomEndPoint*, uint8_t* buf, si
 
 static void signal_handler(int) { g_running = false; }
 
-struct Args { std::string device; int verbosity = 4; int scan_timeout = 10000; int reconnect_delay = 3; int rssi_interval = 0; };
+struct Args { std::string device; int verbosity = 4; int scan_timeout = 10000; int reconnect_delay = 3; int rssi_interval = 0; int hci_device = 0; };
 
 static Args parse_args(int argc, char* argv[]) {
     Args a;
@@ -48,13 +48,15 @@ static Args parse_args(int argc, char* argv[]) {
         else if (arg == "--timeout" && i + 1 < argc) a.scan_timeout = std::stoi(argv[++i]);
         else if (arg == "--reconnect-delay" && i + 1 < argc) a.reconnect_delay = std::max(0, std::stoi(argv[++i]));
         else if (arg == "--rssi-interval" && i + 1 < argc) a.rssi_interval = std::clamp(std::stoi(argv[++i]), 0, 60);
+        else if (arg == "--hci" && i + 1 < argc) a.hci_device = std::max(0, std::stoi(argv[++i]));
         else if (arg == "-h" || arg == "--help") {
-            std::cout << "Usage: " << argv[0] << " --dev <name> [-v|--verbose <0-6>] [--timeout <ms>] [--reconnect-delay <s>] [--rssi-interval <s>]\n";
+            std::cout << "Usage: " << argv[0] << " --dev <name> [-v|--verbose <0-6>] [--timeout <ms>] [--reconnect-delay <s>] [--rssi-interval <s>] [--hci <id>]\n";
             std::cout << "  -d, --dev            BLE device name to connect to (required)\n";
             std::cout << "  -v, --verbose        Verbosity level 0-6 (default: 4, >=5 enables transport debug)\n";
             std::cout << "  --timeout            BLE scan timeout in ms (default: 10000)\n";
             std::cout << "  --reconnect-delay    Seconds between reconnection attempts (default: 3, 0 to disable)\n";
             std::cout << "  --rssi-interval      RSSI logging interval in seconds (default: 0 = disabled, max: 60)\n";
+            std::cout << "  --hci                HCI device ID for RSSI monitoring (default: 0 = hci0)\n";
             std::exit(0);
         }
     }
@@ -75,7 +77,8 @@ int main(int argc, char* argv[]) {
     // Enable RSSI monitoring
     if (args.rssi_interval > 0) {
         g_transport->set_rssi_interval(args.rssi_interval);
-        std::cout << "[Agent] RSSI logging every " << args.rssi_interval << "s" << std::endl;
+        g_transport->set_hci_device(args.hci_device);
+        std::cout << "[Agent] RSSI logging every " << args.rssi_interval << "s on hci" << args.hci_device << std::endl;
     }
 
     // Enable transport debug logging for high verbosity
