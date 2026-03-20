@@ -21,11 +21,11 @@ namespace micro_ros_agent_ble {
 
     class BLETransport {
     public:
-        explicit BLETransport(const std::string& device_name, int scan_timout_ms = 10000);
+        explicit BLETransport(const std::string& device_name, int scan_timeout_ms = 10000, int adapter_index = 0);
         ~BLETransport();
 
         BLETransport(const BLETransport&) = delete;
-        BLETransport& operator=(const BLETransport&)= delete;
+        BLETransport& operator=(const BLETransport&) = delete;
 
         bool init();
         bool fini();
@@ -49,6 +49,7 @@ namespace micro_ros_agent_ble {
 
         std::string device_name_;
         int scan_timeout_ms_;
+        int adapter_index_;
 
         std::unique_ptr<SimpleBLE::Adapter> adapter_;
         std::unique_ptr<SimpleBLE::Peripheral> peripheral_;

@@ -9,9 +9,10 @@
 
 namespace micro_ros_agent_ble {
 
-BLETransport::BLETransport(const std::string& device_name, int scan_timeout_ms)
+BLETransport::BLETransport(const std::string& device_name, int scan_timeout_ms, int adapter_index)
     : device_name_(device_name)
     , scan_timeout_ms_(scan_timeout_ms)
+    , adapter_index_(adapter_index)
 {
 }
 
@@ -33,8 +34,13 @@ bool BLETransport::init()
             std::cerr << "[BLE] No Bluetooth adapters found" << std::endl;
             return false;
         }
+        if (adapter_index_ < 0 || adapter_index_ >= static_cast<int>(adapters.size())) {
+            std::cerr << "[BLE] Adapter index " << adapter_index_ << " out of range (0-"
+                      << adapters.size() - 1 << ")" << std::endl;
+            return false;
+        }
 
-        adapter_ = std::make_unique<SimpleBLE::Adapter>(adapters[0]);
+        adapter_ = std::make_unique<SimpleBLE::Adapter>(adapters[adapter_index_]);
         std::cout << "[BLE] Using adapter: " << adapter_->identifier() << std::endl;
 
         if (!scan_for_device()) {
@@ -70,16 +76,12 @@ bool BLETransport::init()
 bool BLETransport::fini()
 {
     connected_ = false;
-    rx_cv_.notify_all();  // Wake up any waiting receive()
+    rx_cv_.notify_all();
 
     try {
         if (peripheral_ && peripheral_->is_connected()) {
-            try {
-                peripheral_->unsubscribe(NUSConfig::SERVICE_UUID, NUSConfig::TX_CHAR_UUID);
-            } catch (...) {}
-            try {
-                peripheral_->disconnect();
-            } catch (...) {}
+            peripheral_->unsubscribe(NUSConfig::SERVICE_UUID, NUSConfig::TX_CHAR_UUID);
+            peripheral_->disconnect();
             std::cout << "[BLE] Disconnected" << std::endl;
         }
     } catch (...) {}
@@ -87,10 +89,8 @@ bool BLETransport::fini()
     peripheral_.reset();
     adapter_.reset();
 
-    // Clear receive buffer
     std::lock_guard<std::mutex> lock(rx_mutex_);
-    std::queue<uint8_t> empty;
-    std::swap(rx_buffer_, empty);
+    rx_buffer_ = {};
 
     return true;
 }
@@ -247,7 +247,7 @@ bool BLETransport::setup_notifications()
 {
     if (!peripheral_ || !peripheral_->is_connected()) return false;
 
-    // Retry a few times — slow adapters may not finish GATT discovery immediately
+    // Retry a few times - slow adapters may not finish GATT discovery immediately
     for (int attempt = 1; attempt <= 3; ++attempt) {
         try {
             peripheral_->notify(
@@ -276,11 +276,10 @@ void BLETransport::on_notification(SimpleBLE::ByteArray data)
 {
     std::lock_guard<std::mutex> lock(rx_mutex_);
 
-    for (size_t i = 0; i < data.size(); ++i) {
-        if (rx_buffer_.size() >= MAX_RX_BUFFER_SIZE) {
-            rx_buffer_.pop();  // Drop oldest on overflow
-        }
-        rx_buffer_.push(static_cast<uint8_t>(data[i]));
+    for (uint8_t byte : data) {
+        if (rx_buffer_.size() >= MAX_RX_BUFFER_SIZE)
+            rx_buffer_.pop();
+        rx_buffer_.push(byte);
     }
 
     rx_cv_.notify_one();

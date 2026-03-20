@@ -29,6 +29,12 @@ def generate_launch_description():
         description='Seconds between reconnection attempts (0 to disable)'
     )
 
+    adapter_arg = DeclareLaunchArgument(
+        'adapter',
+        default_value='0',
+        description='Bluetooth adapter index (use --list-adapters to see available)'
+    )
+
     agent_node_device = Node(
         package='micro_ros_agent_ble',
         executable='micro_ros_agent_ble',
@@ -39,6 +45,7 @@ def generate_launch_description():
             '--timeout', LaunchConfiguration('scan_timeout'),
             '--verbose', LaunchConfiguration('verbose'),
             '--reconnect-delay', LaunchConfiguration('reconnect_delay'),
+            '--adapter', LaunchConfiguration('adapter'),
         ]
     )
 
@@ -47,5 +54,6 @@ def generate_launch_description():
         scan_timeout_arg,
         verbose_arg,
         reconnect_delay_arg,
+        adapter_arg,
         agent_node_device
     ])
