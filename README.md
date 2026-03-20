@@ -44,6 +44,13 @@ If you write the firmware on your own, make sure your transport also uses these 
 
 ## BLE Debugging
 
+1) Try to restart your adapter:
+```bash
+sudo hciconfig hci1 down && sleep 1 && sudo hciconfig hci1 up
+```
+
+(replace hci1 with your actual adapter, you can check the connected ones using hciconfig)
+
 ### Supervision Timeout
 
 The firmware automatically requests a 3-second BLE supervision timeout via L2CAP after connecting. This ensures faster disconnect detection across all Bluetooth adapters (some adapters default to as low as 420ms, which can cause drops during entity creation).
