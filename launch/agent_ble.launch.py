@@ -16,7 +16,7 @@ def generate_launch_description():
         default_value='5000',
         description='BLE scan timeout in milliseconds'
     )
-    
+
     verbose_arg = DeclareLaunchArgument(
         'verbose',
         default_value='4',
@@ -25,20 +25,8 @@ def generate_launch_description():
 
     reconnect_delay_arg = DeclareLaunchArgument(
         'reconnect_delay',
-        default_value='3',
+        default_value='2',
         description='Seconds between reconnection attempts (0 to disable)'
-    )
-
-    rssi_interval_arg = DeclareLaunchArgument(
-        'rssi_interval',
-        default_value='5',
-        description='RSSI logging interval in seconds (0 to disable)'
-    )
-
-    hci_device_arg = DeclareLaunchArgument(
-        'hci',
-        default_value='0',
-        description='HCI device ID for RSSI monitoring (0 = hci0, 1 = hci1, ...)'
     )
 
     agent_node_device = Node(
@@ -51,8 +39,6 @@ def generate_launch_description():
             '--timeout', LaunchConfiguration('scan_timeout'),
             '--verbose', LaunchConfiguration('verbose'),
             '--reconnect-delay', LaunchConfiguration('reconnect_delay'),
-            '--rssi-interval', LaunchConfiguration('rssi_interval'),
-            '--hci', LaunchConfiguration('hci'),
         ]
     )
 
@@ -61,7 +47,5 @@ def generate_launch_description():
         scan_timeout_arg,
         verbose_arg,
         reconnect_delay_arg,
-        rssi_interval_arg,
-        hci_device_arg,
         agent_node_device
     ])

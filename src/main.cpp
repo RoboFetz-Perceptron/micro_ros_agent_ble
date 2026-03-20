@@ -15,21 +15,20 @@
 static std::unique_ptr<micro_ros_agent_ble::BLETransport> g_transport;
 static eprosima::uxr::CustomEndPoint g_endpoint;
 static std::atomic<bool> g_running{true};
-static std::atomic<bool> g_shutting_down{false};
 static std::unique_ptr<uros::agent::graph_manager::GraphManagerPlugin> g_graph_plugin;
 
 static bool callback_init() { return g_transport && g_transport->init(); }
 static bool callback_fini() { return !g_transport || g_transport->fini(); }
 
 static ssize_t callback_send(const eprosima::uxr::CustomEndPoint*, uint8_t* buf, size_t len, eprosima::uxr::TransportRc& err) {
-    if (g_shutting_down || !g_transport || !g_transport->is_connected()) { err = eprosima::uxr::TransportRc::connection_error; return -1; }
+    if (!g_transport || !g_transport->is_connected()) { err = eprosima::uxr::TransportRc::connection_error; return -1; }
     ssize_t r = g_transport->send(buf, len);
     err = (r < 0) ? eprosima::uxr::TransportRc::server_error : eprosima::uxr::TransportRc::ok;
     return r;
 }
 
 static ssize_t callback_receive(eprosima::uxr::CustomEndPoint*, uint8_t* buf, size_t max, int timeout_ms, eprosima::uxr::TransportRc& err) {
-    if (g_shutting_down || !g_transport) { err = eprosima::uxr::TransportRc::connection_error; return -1; }
+    if (!g_transport) { err = eprosima::uxr::TransportRc::connection_error; return -1; }
     ssize_t r = g_transport->receive(buf, max, timeout_ms);
     err = (r < 0) ? eprosima::uxr::TransportRc::connection_error : (r == 0) ? eprosima::uxr::TransportRc::timeout_error : eprosima::uxr::TransportRc::ok;
     return r;
@@ -37,7 +36,7 @@ static ssize_t callback_receive(eprosima::uxr::CustomEndPoint*, uint8_t* buf, si
 
 static void signal_handler(int) { g_running = false; }
 
-struct Args { std::string device; int verbosity = 4; int scan_timeout = 10000; int reconnect_delay = 3; int rssi_interval = 0; int hci_device = 0; };
+struct Args { std::string device; int verbosity = 4; int scan_timeout = 10000; int reconnect_delay = 3; };
 
 static Args parse_args(int argc, char* argv[]) {
     Args a;
@@ -47,16 +46,12 @@ static Args parse_args(int argc, char* argv[]) {
         else if ((arg == "-v" || arg == "--verbose") && i + 1 < argc) a.verbosity = std::clamp(std::stoi(argv[++i]), 0, 6);
         else if (arg == "--timeout" && i + 1 < argc) a.scan_timeout = std::stoi(argv[++i]);
         else if (arg == "--reconnect-delay" && i + 1 < argc) a.reconnect_delay = std::max(0, std::stoi(argv[++i]));
-        else if (arg == "--rssi-interval" && i + 1 < argc) a.rssi_interval = std::clamp(std::stoi(argv[++i]), 0, 60);
-        else if (arg == "--hci" && i + 1 < argc) a.hci_device = std::max(0, std::stoi(argv[++i]));
         else if (arg == "-h" || arg == "--help") {
-            std::cout << "Usage: " << argv[0] << " --dev <name> [-v|--verbose <0-6>] [--timeout <ms>] [--reconnect-delay <s>] [--rssi-interval <s>] [--hci <id>]\n";
+            std::cout << "Usage: " << argv[0] << " --dev <name> [-v|--verbose <0-6>] [--timeout <ms>] [--reconnect-delay <s>]\n";
             std::cout << "  -d, --dev            BLE device name to connect to (required)\n";
             std::cout << "  -v, --verbose        Verbosity level 0-6 (default: 4, >=5 enables transport debug)\n";
             std::cout << "  --timeout            BLE scan timeout in ms (default: 10000)\n";
             std::cout << "  --reconnect-delay    Seconds between reconnection attempts (default: 3, 0 to disable)\n";
-            std::cout << "  --rssi-interval      RSSI logging interval in seconds (default: 0 = disabled, max: 60)\n";
-            std::cout << "  --hci                HCI device ID for RSSI monitoring (default: 0 = hci0)\n";
             std::exit(0);
         }
     }
@@ -73,13 +68,6 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signal_handler);
 
     g_transport = std::make_unique<micro_ros_agent_ble::BLETransport>(args.device, args.scan_timeout);
-
-    // Enable RSSI monitoring
-    if (args.rssi_interval > 0) {
-        g_transport->set_rssi_interval(args.rssi_interval);
-        g_transport->set_hci_device(args.hci_device);
-        std::cout << "[Agent] RSSI logging every " << args.rssi_interval << "s on hci" << args.hci_device << std::endl;
-    }
 
     // Enable transport debug logging for high verbosity
     if (args.verbosity >= 5) {
@@ -104,7 +92,6 @@ int main(int argc, char* argv[]) {
     bool reconnect = args.reconnect_delay > 0;
 
     while (g_running) {
-        g_shutting_down = false;
         if (!agent.start()) {
             if (!reconnect || !g_running) {
                 std::cerr << "[Agent] Failed to start" << std::endl;
@@ -124,7 +111,6 @@ int main(int argc, char* argv[]) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
-        g_shutting_down = true;
         agent.stop();
 
         if (!g_running) break;
@@ -137,9 +123,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Final cleanup — set shutdown flag to prevent DDS callbacks from
-    // accessing transport after it's torn down (prevents SIGSEGV)
-    g_shutting_down = true;
+    // Final cleanup (agent.stop() is safe to call if already stopped)
     agent.stop();
     g_graph_plugin.reset();
     g_transport.reset();

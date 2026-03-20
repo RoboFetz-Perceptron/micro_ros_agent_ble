@@ -7,15 +7,6 @@
 #include <thread>
 #include <chrono>
 
-#include <sys/ioctl.h>
-#include <unistd.h>
-
-extern "C" {
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-}
-
 namespace micro_ros_agent_ble {
 
 BLETransport::BLETransport(const std::string& device_name, int scan_timeout_ms)
@@ -31,9 +22,6 @@ BLETransport::~BLETransport()
 
 bool BLETransport::init()
 {
-    // Clean up any previous partial state from a failed init or prior connection
-    fini();
-
     try {
         if (!SimpleBLE::Adapter::bluetooth_enabled()) {
             std::cerr << "[BLE] Bluetooth is not enabled" << std::endl;
@@ -71,11 +59,6 @@ bool BLETransport::init()
         std::cout << "[BLE] Connected to " << device_name_
                   << " (" << device_address_ << ")" << std::endl;
 
-        // Start RSSI monitoring thread if interval is set
-        if (rssi_interval_s_ > 0) {
-            rssi_thread_ = std::thread(&BLETransport::rssi_monitor_loop, this);
-        }
-
         return true;
 
     } catch (const std::exception& e) {
@@ -88,11 +71,6 @@ bool BLETransport::fini()
 {
     connected_ = false;
     rx_cv_.notify_all();  // Wake up any waiting receive()
-
-    // Stop RSSI monitoring thread
-    if (rssi_thread_.joinable()) {
-        rssi_thread_.join();
-    }
 
     try {
         if (peripheral_ && peripheral_->is_connected()) {
@@ -205,45 +183,37 @@ bool BLETransport::scan_for_device()
 {
     std::cout << "[BLE] Scanning for: " << device_name_ << std::endl;
 
-    std::mutex scan_mutex;
-    std::condition_variable scan_cv;
-    std::atomic<bool> found{false};
+    bool found = false;
     SimpleBLE::Peripheral found_peripheral;
 
     adapter_->set_callback_on_scan_found([&](SimpleBLE::Peripheral peripheral) {
         if (peripheral.identifier() == device_name_) {
-            {
-                std::lock_guard<std::mutex> lock(scan_mutex);
-                found_peripheral = std::move(peripheral);
-            }
+            found_peripheral = peripheral;
             found = true;
-            scan_cv.notify_one();
             adapter_->scan_stop();
         }
     });
 
     adapter_->scan_start();
 
-    {
-        std::unique_lock<std::mutex> lock(scan_mutex);
-        scan_cv.wait_for(lock, std::chrono::milliseconds(scan_timeout_ms_), [&] {
-            return found.load();
-        });
+    auto start = std::chrono::steady_clock::now();
+    while (!found) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        if (elapsed >= scan_timeout_ms_) {
+            adapter_->scan_stop();
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    if (!found) {
-        adapter_->scan_stop();
-        return false;
+    if (found) {
+        peripheral_ = std::make_unique<SimpleBLE::Peripheral>(found_peripheral);
+        device_address_ = peripheral_->address();
+        std::cout << "[BLE] Found: " << device_name_ << " at " << device_address_ << std::endl;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(scan_mutex);
-        peripheral_ = std::make_unique<SimpleBLE::Peripheral>(std::move(found_peripheral));
-    }
-    device_address_ = peripheral_->address();
-    std::cout << "[BLE] Found: " << device_name_ << " at " << device_address_ << std::endl;
-
-    return true;
+    return found;
 }
 
 bool BLETransport::connect_to_device()
@@ -277,8 +247,8 @@ bool BLETransport::setup_notifications()
 {
     if (!peripheral_ || !peripheral_->is_connected()) return false;
 
-    // Retry a few times, GATT discovery may still be in progress after connect
-    for (int attempt = 0; attempt < 5; ++attempt) {
+    // Retry a few times — slow adapters may not finish GATT discovery immediately
+    for (int attempt = 1; attempt <= 3; ++attempt) {
         try {
             peripheral_->notify(
                 NUSConfig::SERVICE_UUID,
@@ -291,16 +261,14 @@ bool BLETransport::setup_notifications()
             return true;
 
         } catch (const std::exception& e) {
-            if (attempt < 4) {
-                std::cout << "[BLE] Notification setup attempt " << (attempt + 1)
-                          << " failed, retrying..." << std::endl;
+            std::cerr << "[BLE] Notification setup attempt " << attempt
+                      << "/3 failed: " << e.what() << std::endl;
+            if (attempt < 3) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            } else {
-                std::cerr << "[BLE] Notification setup failed after retries: "
-                          << e.what() << std::endl;
             }
         }
     }
+
     return false;
 }
 
@@ -316,52 +284,6 @@ void BLETransport::on_notification(SimpleBLE::ByteArray data)
     }
 
     rx_cv_.notify_one();
-}
-
-void BLETransport::rssi_monitor_loop()
-{
-    // Parse BLE address from device_address_ (e.g. "40:4C:CA:57:70:B2")
-    bdaddr_t bdaddr;
-    str2ba(device_address_.c_str(), &bdaddr);
-
-    // Open the configured HCI adapter
-    int hci_sock = hci_open_dev(hci_dev_id_);
-    if (hci_sock < 0) {
-        std::cerr << "[BLE] RSSI monitor: failed to open hci" << hci_dev_id_ << std::endl;
-        return;
-    }
-    std::cout << "[BLE] RSSI monitor: using hci" << hci_dev_id_ << std::endl;
-
-    while (connected_) {
-        // Get connection handle for our device
-        struct hci_conn_info_req *cr;
-        cr = static_cast<struct hci_conn_info_req*>(
-            malloc(sizeof(*cr) + sizeof(struct hci_conn_info)));
-        if (!cr) break;
-
-        bacpy(&cr->bdaddr, &bdaddr);
-        cr->type = 0x80;  // LE_LINK
-
-        if (ioctl(hci_sock, HCIGETCONNINFO, cr) == 0) {
-            uint16_t handle = cr->conn_info->handle;
-            int8_t rssi;
-            if (hci_read_rssi(hci_sock, handle, &rssi, 1000) == 0) {
-                std::cout << "[BLE] RSSI: " << static_cast<int>(rssi) << " dBm" << std::endl;
-            } else {
-                std::cerr << "[BLE] RSSI read failed" << std::endl;
-            }
-        } else {
-            std::cerr << "[BLE] RSSI monitor: could not get connection handle" << std::endl;
-        }
-        free(cr);
-
-        // Sleep in small increments to allow quick shutdown
-        for (int i = 0; i < rssi_interval_s_ * 10 && connected_; ++i) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    }
-
-    close(hci_sock);
 }
 
 void BLETransport::on_disconnect()

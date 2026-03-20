@@ -10,7 +10,6 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
-#include <thread>
 
 namespace micro_ros_agent_ble {
 
@@ -38,12 +37,6 @@ namespace micro_ros_agent_ble {
         // Debug logging control
         void set_debug(bool enable) { debug_enabled_ = enable; }
 
-        // RSSI logging interval (0 = disabled)
-        void set_rssi_interval(int seconds) { rssi_interval_s_ = seconds; }
-
-        // HCI device ID for RSSI monitoring (default: 0 = hci0)
-        void set_hci_device(int dev_id) { hci_dev_id_ = dev_id; }
-
         std::string device_name() const { return device_name_; }
         std::string device_address() const { return device_address_; }
 
@@ -53,7 +46,6 @@ namespace micro_ros_agent_ble {
         bool setup_notifications();
         void on_notification(SimpleBLE::ByteArray data);
         void on_disconnect();
-        void rssi_monitor_loop();
 
         std::string device_name_;
         int scan_timeout_ms_;
@@ -68,11 +60,6 @@ namespace micro_ros_agent_ble {
         std::atomic<bool> connected_{false};
         std::string device_address_;
         bool debug_enabled_{false};
-
-        // RSSI monitoring
-        int rssi_interval_s_{0};
-        int hci_dev_id_{0};
-        std::thread rssi_thread_;
 
         static constexpr size_t MAX_RX_BUFFER_SIZE = 8192;
         static constexpr size_t BLE_CHUNK_SIZE = 244;  // Max ATT payload with 247 MTU
