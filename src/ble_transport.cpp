@@ -55,9 +55,11 @@ bool BLETransport::init()
 
         if (!setup_notifications()) {
             std::cerr << "[BLE] Failed to setup notifications" << std::endl;
-            if (peripheral_ && peripheral_->is_connected()) {
-                peripheral_->disconnect();
-            }
+            // Always try to disconnect - even if is_connected() returns false,
+            // the HCI connection may still be alive (e.g. broken ACL data path
+            // on cheap adapters). Leaving it open creates a zombie connection
+            // that prevents the peripheral from advertising again.
+            try { if (peripheral_) peripheral_->disconnect(); } catch (...) {}
             return false;
         }
 
@@ -79,8 +81,11 @@ bool BLETransport::fini()
     rx_cv_.notify_all();
 
     try {
-        if (peripheral_ && peripheral_->is_connected()) {
-            peripheral_->unsubscribe(NUSConfig::SERVICE_UUID, NUSConfig::TX_CHAR_UUID);
+        if (peripheral_) {
+            if (peripheral_->is_connected()) {
+                try { peripheral_->unsubscribe(NUSConfig::SERVICE_UUID, NUSConfig::TX_CHAR_UUID); } catch (...) {}
+            }
+            // Always try disconnect to clean up any zombie HCI connections
             peripheral_->disconnect();
             std::cout << "[BLE] Disconnected" << std::endl;
         }
@@ -239,6 +244,9 @@ bool BLETransport::connect_to_device()
 
     } catch (const std::exception& e) {
         std::cerr << "[BLE] Connection error: " << e.what() << std::endl;
+        // Clean up any half-open HCI connection to avoid zombie connections
+        // that prevent the peripheral from advertising again
+        try { peripheral_->disconnect(); } catch (...) {}
         return false;
     }
 }
